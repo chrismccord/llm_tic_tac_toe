@@ -120,7 +120,7 @@ defmodule TicTacToe.GameServer do
               next_player = if player == "X", do: "O", else: "X"
               new_state = %{state | board: new_board, current_player: next_player}
 
-              # Check for a winner after the move
+              # Check for a winner or draw after the move
               case check_winner(new_board) do
                 {:winner, winner} ->
                   Logger.debug("Winner detected: #{winner}")
@@ -128,6 +128,14 @@ defmodule TicTacToe.GameServer do
                   PubSub.broadcast(TicTacToePubSub, @topic, {:move_made, player, index})
                   new_state = %{new_state | winner: winner}
                   PubSub.broadcast(TicTacToePubSub, @topic, {:winner, winner})
+                  {:reply, :ok, new_state}
+
+                :draw ->
+                  Logger.debug("Draw detected")
+                  # Broadcast the move first, then the draw
+                  PubSub.broadcast(TicTacToePubSub, @topic, {:move_made, player, index})
+                  new_state = %{new_state | winner: :tie}
+                  PubSub.broadcast(TicTacToePubSub, @topic, {:winner, :tie})
                   {:reply, :ok, new_state}
 
                 :no_winner ->
@@ -189,11 +197,22 @@ defmodule TicTacToe.GameServer do
     ]
 
     # Check each winning combination
-    Enum.find_value(winning_combinations, :no_winner, fn [a, b, c] ->
+    case Enum.find_value(winning_combinations, :no_winner, fn [a, b, c] ->
       if Enum.at(board, a) && Enum.at(board, a) == Enum.at(board, b) && Enum.at(board, a) == Enum.at(board, c) do
         {:winner, Enum.at(board, a)}
       end
-    end)
+    end) do
+      :no_winner ->
+        # If no winner, check if the board is full (draw)
+        if Enum.all?(board, & &1) do
+          :draw
+        else
+          :no_winner
+        end
+
+      winner ->
+        winner
+    end
   end
 
   defp process_pending_down_messages(state) do
