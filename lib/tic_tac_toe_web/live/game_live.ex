@@ -5,144 +5,117 @@ defmodule TicTacToeWeb.GameLive do
   alias Phoenix.PubSub
   alias TicTacToe.PubSub, as: TicTacToePubSub
 
-  @topic "game:lobby"
-
-  def mount(_params, _session, socket) do
+  @impl true
+  def mount(%{"game_id" => game_id}, _session, socket) do
     require Logger
-    Logger.debug("Mounting GameLive. Subscribing to topic: #{@topic}")
+    topic = "game:#{game_id}"
+    Logger.debug("Mounting GameLive for game #{game_id}. Subscribing to topic: #{topic}")
+
+    socket =
+      socket
+      |> assign(:game_id, game_id)
+      |> assign(:player, nil)
+      |> assign(:players, %{})
+      |> assign(:current_player, nil)
+      |> assign(:board, List.duplicate(nil, 9))
+      |> assign(:winner, nil)
+      |> assign(:game_full, false)
+      |> assign(:awaiting_player, true)
 
     if connected?(socket) do
-      PubSub.subscribe(TicTacToePubSub, @topic)
+      PubSub.subscribe(TicTacToePubSub, topic)
 
-      # Only join the game if we're connected
-      case GameServer.join(self()) do
-        {:ok, player} ->
-          Logger.debug("Successfully joined as player: #{inspect(player)}")
-          players = GameServer.get_players()
-          awaiting_player = map_size(players) < 2
+      case GameServer.start_or_get(game_id) do
+        {:ok, _game_server} ->
+          case GameServer.join(game_id, self()) do
+            {:ok, player} ->
+              players = GameServer.get_players(game_id)
+              current_player = GameServer.current_player(game_id)
 
-          socket =
-            socket
-            |> assign(:board, List.duplicate(nil, 9))
-            |> assign(:winner, nil)
-            |> assign(:game_full, false)
-            |> assign(:player_left, false)
-            |> assign(:awaiting_player, awaiting_player)
-            |> assign(:player, player)
-            |> assign(:current_player, GameServer.current_player())
+              socket =
+                socket
+                |> assign(:player, player)
+                |> assign(:players, players)
+                |> assign(:current_player, current_player)
+                |> assign(:awaiting_player, Kernel.map_size(players) < 2)
 
-          {:ok, socket}
+              {:ok, socket}
 
-        {:error, :game_full} ->
-          Logger.debug("Game is full")
-          {:ok, assign(socket, :game_full, true)}
-      end
-    else
-      # For disconnected mounts, initialize with default state and attempt to get player
-      player = GameServer.get_player(self())
-      {:ok,
-       socket
-       |> assign(:board, List.duplicate(nil, 9))
-       |> assign(:winner, nil)
-       |> assign(:game_full, false)
-       |> assign(:player_left, false)
-       |> assign(:awaiting_player, true)
-       |> assign(:player, player)}
-    end
-  end
-
-  def handle_info({:player_joined, awaiting_player}, socket) do
-    require Logger
-    Logger.debug("Received :player_joined message. awaiting_player=#{awaiting_player}")
-
-    {:noreply,
-     socket
-     |> assign(:awaiting_player, awaiting_player)
-     |> assign(:current_player, GameServer.current_player())}
-  end
-
-  def handle_info({:player_left, awaiting_player}, socket) do
-    require Logger
-    Logger.debug("Player left. Setting awaiting_player to #{awaiting_player}")
-
-    {:noreply,
-     socket
-     |> assign(:awaiting_player, awaiting_player)
-     |> assign(:current_player, GameServer.current_player())}
-  end
-
-  def handle_info({:move_made, player, index}, socket) do
-    require Logger
-    Logger.debug("Received :move_made message. index=#{index}")
-
-    # Update the board state with the player's character
-    board = List.update_at(socket.assigns.board, index, fn _ -> player end)
-    {:noreply,
-     socket
-     |> assign(:board, board)
-     |> assign(:current_player, GameServer.current_player())
-     |> assign(:winner, GameServer.winner())}
-  end
-
-  def handle_info({:winner, winner}, socket) do
-    require Logger
-    Logger.debug("Received :winner message. winner=#{winner}")
-
-    {:noreply,
-     socket
-     |> assign(:winner, winner)}
-  end
-
-  def handle_info({:game_reset, board}, socket) do
-    require Logger
-    Logger.debug("Received :game_reset message. Resetting board")
-
-    {:noreply,
-     socket
-     |> assign(:board, board)
-     |> assign(:winner, nil)
-     |> assign(:current_player, GameServer.current_player())}
-  end
-
-  def handle_event("move", %{"index" => index}, socket) do
-    require Logger
-    index = String.to_integer(index)
-
-    # Only allow moves if it's the current player's turn
-    if socket.assigns.current_player == socket.assigns.player do
-      case GameServer.move(self(), index) do
-        :ok ->
-          {:noreply, socket}
+            {:error, :game_full} ->
+              {:ok, assign(socket, game_full: true)}
+          end
 
         {:error, reason} ->
-          Logger.debug("Move failed: #{inspect(reason)}")
-          {:noreply, socket}
+          Logger.error("Failed to start or get game server: #{inspect(reason)}")
+          {:ok, assign(socket, game_full: true)}
       end
     else
-      Logger.debug("Not the current player's turn")
-      {:noreply, socket}
+      {:ok, socket}
     end
   end
 
-  def handle_event("reset", _params, socket) do
-    require Logger
-    Logger.debug("Resetting game")
+  @impl true
+  def handle_event("move", %{"index" => index}, socket) do
+    index = String.to_integer(index)
+    game_id = socket.assigns.game_id
 
-    GameServer.reset()
-    {:noreply,
-     socket
-     |> assign(:board, List.duplicate(nil, 9))
-     |> assign(:winner, nil)
-     |> assign(:current_player, GameServer.current_player())
-     |> put_flash(:info, "Game reset! Starting a new match.")}
+    case GameServer.move(game_id, socket.assigns.player, index) do
+      :ok -> {:noreply, socket}
+      {:error, :invalid_move} -> {:noreply, socket}
+    end
   end
 
-  defp cell_classes(current_player, player, winner, cell) do
+  @impl true
+  def handle_event("reset", _params, socket) do
+
+    game_id = socket.assigns.game_id
+    GameServer.reset(game_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:move_made, _player, _index, board}, socket) do
+    current_player = GameServer.current_player(socket.assigns.game_id)
+    {:noreply, assign(socket, board: board, current_player: current_player)}
+  end
+
+  @impl true
+  def handle_info({:winner, winner}, socket) do
+    {:noreply, assign(socket, winner: winner)}
+  end
+
+  @impl true
+  def handle_info({:game_reset, board}, socket) do
+    current_player = GameServer.current_player(socket.assigns.game_id)
+    {:noreply, assign(socket, board: board, winner: nil, current_player: current_player)}
+  end
+
+  @impl true
+  def handle_info({:player_left, _player_pid}, socket) do
+    {:noreply, assign(socket, awaiting_player: true)}
+  end
+
+  @impl true
+  def handle_info({:player_joined, _player_pid}, socket) do
+    players = GameServer.get_players(socket.assigns.game_id)
+    current_player = GameServer.current_player(socket.assigns.game_id)
+
+    socket =
+      socket
+      |> assign(:players, players)
+      |> assign(:current_player, current_player)
+      |> assign(:awaiting_player, false)
+
+    {:noreply, socket}
+  end
+
+  def cell_classes(current_player, player, winner, cell) do
     cond do
-      !is_nil(winner) -> "cursor-not-allowed"
-      !is_nil(cell) -> "cursor-not-allowed"
-      current_player == player -> "hover:bg-gray-100 cursor-pointer"
-      true -> "cursor-not-allowed"
+      winner && cell == player -> "bg-green-200"
+      cell == "X" -> "text-purple-600"
+      cell == "O" -> "text-orange-500"
+      current_player == player -> "bg-blue-100 hover:bg-blue-200"
+      true -> "bg-gray-100 hover:bg-gray-200"
     end
   end
 end

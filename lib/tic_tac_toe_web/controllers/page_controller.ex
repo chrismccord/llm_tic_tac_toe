@@ -1,9 +1,8 @@
 defmodule TicTacToeWeb.PageController do
   use TicTacToeWeb, :controller
 
-  def home(conn, _params) do
-    # The home page is often custom made,
-    # so skip the default app layout.
-    render(conn, :home, layout: false)
+  def redirect_to_random_game(conn, _params) do
+    game_id = Ecto.UUID.generate()
+    redirect(conn, to: ~p"/play/#{game_id}")
   end
 end
