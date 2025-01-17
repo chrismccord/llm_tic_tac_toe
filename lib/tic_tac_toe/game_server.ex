@@ -46,6 +46,9 @@ defmodule TicTacToe.GameServer do
     require Logger
     Logger.debug("Player joined: #{inspect(player_pid)}. Current players: #{map_size(state.players)}")
 
+    # First, process any pending :DOWN messages to clean up dead players
+    state = process_pending_down_messages(state)
+
     case map_size(state.players) do
       0 ->
         Logger.debug("First player joined. Setting awaiting_player to true")
@@ -79,11 +82,14 @@ defmodule TicTacToe.GameServer do
     require Logger
     Logger.debug("Resetting game state while keeping players")
 
+    # Randomly select the starting player for the new match
+    starting_player = Enum.random(["X", "O"])
+
     # Reset the board, winner, and current_player while keeping the players
     new_state = %{state |
       board: List.duplicate(nil, 9),
       winner: nil,
-      current_player: "X" # Always start with X after reset
+      current_player: starting_player
     }
 
     # Broadcast the reset to all players
@@ -188,5 +194,26 @@ defmodule TicTacToe.GameServer do
         {:winner, Enum.at(board, a)}
       end
     end)
+  end
+
+  defp process_pending_down_messages(state) do
+    receive do
+      {:DOWN, _ref, :process, pid, _reason} ->
+        require Logger
+        Logger.debug("Processing pending DOWN message for player: #{inspect(pid)}")
+        new_players = Map.delete(state.players, pid)
+        new_state = %{state |
+          players: new_players,
+          board: List.duplicate(nil, 9),
+          winner: nil,
+          current_player: nil
+        }
+        # Notify remaining players and update awaiting_player state
+        awaiting_player = map_size(new_players) < 2
+        PubSub.broadcast(TicTacToePubSub, @topic, {:player_left, awaiting_player})
+        process_pending_down_messages(new_state)
+    after
+      0 -> state
+    end
   end
 end
