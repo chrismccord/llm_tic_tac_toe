@@ -27,6 +27,14 @@ defmodule TicTacToe.GameServer do
     GenServer.call(via_tuple(game_id), {:join, player_pid})
   end
 
+  def awaiting_player?(game_id) do
+    GenServer.call(via_tuple(game_id), :awaiting_player?)
+  end
+
+  def game_full?(game_id) do
+    GenServer.call(via_tuple(game_id), :game_full?)
+  end
+
   def move(game_id, player, index) do
     GenServer.call(via_tuple(game_id), {:move, player, index})
   end
@@ -43,7 +51,14 @@ defmodule TicTacToe.GameServer do
     GenServer.call(via_tuple(game_id), :current_player)
   end
 
+  def get_board(game_id) do
+    GenServer.call(via_tuple(game_id), :get_board)
+  end
+
   def handle_call({:join, player_pid}, _from, state) do
+    # Check for any pending :DOWN messages first
+    state = process_pending_downs(state)
+
     case Kernel.map_size(state.players) do
       0 ->
         Process.monitor(player_pid)
@@ -55,6 +70,16 @@ defmodule TicTacToe.GameServer do
       _ ->
         {:reply, {:error, :game_full}, state}
     end
+  end
+
+  def handle_call(:awaiting_player?, _from, state) do
+    state = process_pending_downs(state)
+    {:reply, Kernel.map_size(state.players) < 2, state}
+  end
+
+  def handle_call(:game_full?, _from, state) do
+    state = process_pending_downs(state)
+    {:reply, Kernel.map_size(state.players) >= 2, state}
   end
 
   def handle_call({:move, player, index}, _from, state) do
@@ -92,10 +117,19 @@ defmodule TicTacToe.GameServer do
     {:reply, state.current_player, state}
   end
 
+  def handle_call(:get_board, _from, state) do
+    {:reply, state.board, state}
+  end
+
   def handle_info({:DOWN, _ref, :process, player_pid, _reason}, state) do
     new_players = Map.delete(state.players, player_pid)
     broadcast(state.game_id, {:player_left, player_pid})
-    {:noreply, %{state | players: new_players}}
+
+    if map_size(new_players) == 0 do
+      {:stop, :normal, %{state | players: new_players}}
+    else
+      {:noreply, %{state | players: new_players}}
+    end
   end
 
   defp next_player("X"), do: "O"
@@ -119,5 +153,16 @@ defmodule TicTacToe.GameServer do
 
   defp broadcast(game_id, message) do
     PubSub.broadcast(TicTacToePubSub, "game:#{game_id}", message)
+  end
+
+  defp process_pending_downs(state) do
+    receive do
+      {:DOWN, _ref, :process, player_pid, _reason} ->
+        new_players = Map.delete(state.players, player_pid)
+        broadcast(state.game_id, {:player_left, player_pid})
+        process_pending_downs(%{state | players: new_players})
+    after
+      0 -> state
+    end
   end
 end

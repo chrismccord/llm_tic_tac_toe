@@ -36,7 +36,7 @@
         </p>
         <button
           phx-click="reset"
-          class="mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+          class="my-4 mx-auto px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
         >
           Play Again
         </button>
@@ -54,7 +54,7 @@
           <button
             phx-click="move"
             phx-value-index={index}
-            class={"w-24 h-24 bg-gray-100 border border-gray-300 text-4xl font-bold #{cell_classes(@current_player, @player, @winner, cell)}"}
+            class={"w-24 h-24 bg-gray-300 border border-gray-300 text-4xl font-bold rounded-lg #{cell_classes(cell)}"}
             disabled={!is_nil(cell) or !is_nil(@winner) or @current_player != @player}
           >
             <%= cell %>
@@ -71,6 +71,5 @@
     input.select();
     input.setSelectionRange(0, 99999); // For mobile devices
     document.execCommand("copy");
-    alert("Game URL copied to clipboard!");
   }
 </script>
