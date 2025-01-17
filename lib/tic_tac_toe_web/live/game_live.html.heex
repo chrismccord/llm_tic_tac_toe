@@ -1,0 +1,47 @@
+<div class="flex flex-col items-center justify-center h-screen">
+  <%= if @game_full do %>
+    <p class="text-red-500 text-2xl mb-4">Game is full. Please try again later.</p>
+  <% else %>
+    <%= if @awaiting_player do %>
+      <p class="text-blue-500 text-2xl mb-4">
+        You are player <%= @player %>. Waiting for another player to join...
+      </p>
+    <% else %>
+      <%= if @winner do %>
+        <p class="text-green-500 text-2xl mb-4">
+          <%= if @winner == :tie do %>
+            It's a tie!
+          <% else %>
+            Player <%= @winner %> wins!
+          <% end %>
+        </p>
+        <button
+          phx-click="reset"
+          class="mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200"
+        >
+          Play Again
+        </button>
+      <% else %>
+        <p class="text-gray-300 text-2xl mb-4">
+          <%= if @current_player == @player do %>
+            Your turn (<%= @player %>)
+          <% else %>
+            Waiting for opponent's turn...
+          <% end %>
+        </p>
+      <% end %>
+      <div class="grid grid-cols-3 gap-2">
+        <%= for {cell, index} <- Enum.with_index(@board) do %>
+          <button
+            phx-click="move"
+            phx-value-index={index}
+            class={"w-24 h-24 border border-gray-300 text-4xl font-bold #{cell_classes(@current_player, @player, @winner, cell)}"}
+            disabled={!is_nil(cell) or !is_nil(@winner) or @current_player != @player}
+          >
+            <%= cell %>
+          </button>
+        <% end %>
+      </div>
+    <% end %>
+  <% end %>
+</div>
