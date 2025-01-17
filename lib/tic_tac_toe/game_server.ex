@@ -118,6 +118,8 @@ defmodule TicTacToe.GameServer do
               case check_winner(new_board) do
                 {:winner, winner} ->
                   Logger.debug("Winner detected: #{winner}")
+                  # Broadcast the move first, then the winner
+                  PubSub.broadcast(TicTacToePubSub, @topic, {:move_made, player, index})
                   new_state = %{new_state | winner: winner}
                   PubSub.broadcast(TicTacToePubSub, @topic, {:winner, winner})
                   {:reply, :ok, new_state}
